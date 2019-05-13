@@ -6,8 +6,8 @@ global
 
 defaults
     log global
-    mode http
-    option httplog
+    mode tcp
+    option tcplog
     option dontlognull
     timeout connect 5000ms
     timeout client 50000ms
@@ -30,9 +30,10 @@ backend gini_backend_{{ $key.Name }}
 {{- end }}
 {{- end }}
 
-listen stats
-    bind *:1936
-    stats enable
-    stats uri /
-    stats hide-version
+# only enable stats on http mode
+#listen stats
+#    bind *:10000
+#    stats enable
+#    stats uri /
+#    stats hide-version
 

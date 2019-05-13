@@ -22,14 +22,18 @@ services:
         depends_on:
             - consul
 
-    consul-template:
+    proxy:
         container_name: consul-template-haproxy
         build: ./consul-template-haproxy
         image: turtle144/cloud-consul-template-haproxy
         command: consul-template -config=/tmp/haproxy.conf -consul=consul:8500 -log-level=debug
+        privileged: true
         networks:
             my_net:
                 ipv4_address: 192.168.10.128
+        depends_on:
+            - consul
+            - registrator
 
     flask-app-01:
         container_name: flask_01
