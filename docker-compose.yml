@@ -1,0 +1,70 @@
+version: "3"
+
+services:
+    consul:
+        container_name: consul
+        image: gliderlabs/consul-server:latest
+        command: -bootstrap
+        restart: always
+        networks:
+            my_net:
+                ipv4_address: 192.168.10.2
+
+    registrator:
+        container_name: registrator
+        image: gliderlabs/registrator:latest
+        command: -internal consul://consul:8500
+        volumes:
+            - /var/run/docker.sock:/tmp/docker.sock
+        networks:
+            my_net:
+                ipv4_address: 192.168.10.3
+        depends_on:
+            - consul
+
+    consul-template:
+        container_name: consul-template-haproxy
+        build: ./consul-template-haproxy
+        image: turtle144/cloud-consul-template-haproxy
+        command: consul-template -config=/tmp/haproxy.conf -consul=consul:8500 -log-level=debug
+        networks:
+            my_net:
+                ipv4_address: 192.168.10.128
+
+    flask-app-01:
+        container_name: flask_01
+        build: ./simple-flask-server
+        image: turtle144/cloud-simple-flask-server
+        environment:
+            - SERVICE_NAME=flask
+            - SERVICE_ID=flask01
+        expose:
+            - "80"
+        networks:
+            my_net:
+                ipv4_address: 192.168.10.4
+
+    flask-app-02:
+        container_name: flask_02
+        image: turtle144/cloud-simple-flask-server
+        environment:
+            - SERVICE_NAME=flask
+            - SERVICE_ID=flask02
+        expose:
+            - "80"
+        networks:
+            my_net:
+                ipv4_address: 192.168.10.5
+        depends_on:
+            - flask-app-01
+
+networks:
+    my_net:
+        driver: bridge
+        ipam:
+            driver: default
+            config:
+                - subnet: 192.168.10.0/24
+
+
+
