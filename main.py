@@ -5,6 +5,7 @@
 import os
 import json
 import argparse
+import cloud
 
 
 class KeyNotFoundError(Exception):
@@ -21,7 +22,7 @@ def parse_file(config_path):
             raise ValueError("Configuration file is not in JSON format")
 
     # config file must contain subnet range
-    if "Subnet" not in configs:
+    if "subnet" not in configs:
         raise KeyNotFoundError("You need to specify the subnet range")
 
     print(json.dumps(configs, indent=2, sort_keys=True))
@@ -41,11 +42,11 @@ if __name__ == "__main__":
     config_group.add_argument("-f", "--config-file", type=str,
                               metavar="PATH", dest="config",
                               help="Specify path to config file")
-    config_group.add_argument("-s", "--subnet", type=str, metavar="NETWORK_IP",
-                              help="Specify a subnet range for the cloud")
+    config_group.add_argument("-s", "--subnet", type=str, metavar="IP_RANGE",
+                              help="Specify a subnet range for the cloud. Use CIDR format")
 
     parser.add_argument("-n", "--net-name", type=str, metavar="NETWORK_NAME",
-                        default="my_network", dest="net_name",
+                        default="my_network", dest="network_name",
                         help="Name the user-defined Docker network")
     parser.add_argument("-p", "--proxy-ip", type=str,
                         metavar="PROXY_IP", dest="proxy_ip",
@@ -65,4 +66,23 @@ if __name__ == "__main__":
     if parsed.config:
         kwargs = parse_file(parsed.config)
     else:
+        import sys
+        sys.exit(0)
+
+    my_cloud = None
+    try:
+        print "Running mycloud.... "
+        my_cloud = cloud.MyCloud(**kwargs)
+        print "Everythiing is up"
+        while True:
+            pass
+    except KeyboardInterrupt:
         pass
+    finally:
+        print "Cleaning up..."
+        if my_cloud:
+            try:
+                my_cloud.cleanup()
+            except Exception as e:
+                print e
+        print "Done!"

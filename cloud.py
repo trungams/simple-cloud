@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """This is a simple cloud program running docker containers. The program provides
-an interactive shell to view and monitor services running in the cloud.
+an API to view and monitor services running in the cloud.
 
 Core components:
 - User-defined Docker bridge network
@@ -17,6 +17,7 @@ import pprint
 
 
 docker_client = docker.from_env()
+docker_api_client = docker.APIClient(base_url="unix://var/run/docker.sock")
 
 
 def _check_alive_container(container):
@@ -27,16 +28,19 @@ def _check_alive_container(container):
 def _stop_container(container):
     try:
         container.kill()
-    except docker.errors.APIError:
+    except:
         pass
+    finally:
+        return True
 
 
 class MyCloudService:
-    def __init__(self, image, name, network, port, init_scale=1):
+    def __init__(self, image, name, network, port, init_scale=1, command=None):
         self.image = image
         self.name = name
         self.port = port
         self.network = network
+        self.command = command
         self.containers = []
         self.idx = 1
         # start the current services with a number of running containers
@@ -50,12 +54,13 @@ class MyCloudService:
     def _run_container(self):
         container = docker_client.containers.run(
             image=self.image,
+            command=self.command,
             network=self.network,
             remove=True,
             detach=True,
             environment={
                 "SERVICE_NAME": self.name,
-                "SERVICE_ID": "%s-%02d" % (self.name, self.idx)
+                "SERVICE_ID": "%s_%02d" % (self.name, self.idx)
             },
             ports={self.port: None}
         )
@@ -67,6 +72,7 @@ class MyCloudService:
         pass
 
     def start(self, scale):
+        """Start the service with an initial number of containers"""
         for _ in range(scale):
             try:
                 container = self._run_container()
@@ -79,11 +85,12 @@ class MyCloudService:
         self.containers = filter(_check_alive_container, self.containers)
 
     def scale(self, new_size):
+        """Scale up or down the current service"""
         if new_size < 1:
-            raise ValueError("Size has to be a positive integer")
+            return False
         cur_size = self.size
         if new_size == cur_size:
-            return
+            return True
         elif new_size < cur_size:
             # stop some running containers
             map(_stop_container, self.containers[new_size:])
@@ -96,19 +103,22 @@ class MyCloudService:
                     self.containers.append(container)
                 except Exception as e:
                     print e
+        return True
 
     def stop(self):
+        """Stop all containers"""
         map(_stop_container, self.containers)
-        self.reload()
+        del self.containers
 
     def __str__(self):
+        """TODO"""
         return "Service: %s" % self.name
 
 
 class MyCloud:
-    def __init__(self, subnet, network_name, proxy_ip=None, gateway_ip=None,
-                 initial_services=None, *args, **kwargs):
-        # reserve ip addresses and create a network
+    def __init__(self, subnet=None, network_name=None, proxy_ip=None,
+                 gateway_ip=None, initial_services=None, *args, **kwargs):
+        # declare variables for network stuff
         self.proxy_ip = proxy_ip
         self.gateway_ip = gateway_ip
         self.reserved_addresses = {}
@@ -118,19 +128,24 @@ class MyCloud:
         self.registry = None
         self.registrator = None
         self.proxy = None
-        self.services = []
+        self.services = {}
+        self.used_ports = set()
 
-        self.reserve_ips()
-        start_network(subnet, network_name, self.reserved_addresses)
+        try:
+            # start the network
+            self.reserve_ips()
+            self.start_network(subnet, network_name, self.reserved_addresses)
 
-        self.start_registry()
-        self.start_registrator()
-        self.start_proxy()
-        self.initialize_services(initial_services)
+            # start service registry, discovery, proxy and services
+            self.start_registry()
+            self.start_registrator()
+            self.start_proxy()
+            self.initialize_services(initial_services)
+        except Exception as e:
+            print e
+            self.cleanup()
 
     def reserve_ips(self):
-        if self.proxy_ip:
-            self.reserved_addresses["proxy"] = self.proxy_ip
         if self.gateway_ip:
             self.reserved_addresses["gateway"] = self.gateway_ip
 
@@ -153,31 +168,27 @@ class MyCloud:
         )
 
     def start_registry(self):
+        print "Starting consul container"
+
         self.registry = docker_client.containers.run(
             image="gliderlabs/consul-server:latest",
             command=["-bootstrap"],
             name="service-registry",
-            restart_policy={
-                "Name": "on-failure",
-                "MaximumRetryCount": 3
-            },
             network=self.network.name,
             remove=True,
             detach=True
         )
 
     def start_registrator(self):
+        print "Starting registrator container"
+
         # block this action until consul registry is up
         while not _check_alive_container(self.registry):
             pass
         self.registrator = docker_client.containers.run(
             image="gliderlabs/registrator:latest",
-            command=["-internal", "consul://consul:8500"],
+            command=["-internal", "consul://service-registry:8500"],
             name="service-registrator",
-            restart_policy={
-                "Name": "on-failure",
-                "MaximumRetryCount": 3
-            },
             volumes=[
                 "/var/run/docker.sock:/tmp/docker.sock"
             ],
@@ -187,53 +198,88 @@ class MyCloud:
         )
 
     def start_proxy(self):
+        print "Starting consul-template container with HAProxy"
+
         # block this action until registrator is up
         while not _check_alive_container(self.registrator):
             pass
-        self.proxy = docker_client.containers.run(
+
+        networking_config = docker_api_client.create_networking_config({
+            self.network.name: docker_api_client.create_endpoint_config(
+                ipv4_address=self.proxy_ip
+            )
+        })
+
+        host_config = docker_api_client.create_host_config(
+            auto_remove=True,
+            privileged=True
+        )
+
+        container = docker_api_client.create_container(
             image="turtle144/cloud-consul-template-haproxy",
             command=[
                 "consul-template",
                 "-config=/tmp/haproxy.conf",
-                "-consul=consul:8500",
+                "-consul=service-registry:8500",
                 "-log-level=debug"
             ],
             name="proxy",
-            privileged=True,
-            remove=True,
-            detach=True,
-            restart_policy={
-                "Name": "on-failure",
-                "MaximumRetryCount": 3
-            }
+            host_config=host_config,
+            networking_config=networking_config,
+            detach=True
         )
 
-        self.network.connect(
-            self.proxy,
-            ipv4_address=self.proxy_ip
-        )
+        self.proxy = docker_client.containers.get(container)
+        self.proxy.start()
 
-    def start_service(self, service_name):
-        pass
+    def start_service(self, image, name, port, scale=1, command=None):
+        if name in self.services:
+            print "Service %s already exists!" % name
+            return
+        if port in self.used_ports:
+            print "Port %d has already been used!" % port
+            return
+        new_service = MyCloudService(image, name, self.network.name, port, scale, command)
+        self.services[name] = new_service
+        self.used_ports.add(port)
 
     def initialize_services(self, services_list):
-        pass
+        for service in services_list:
+            self.start_service(**service)
 
     def stop_service(self, service_name):
-        pass
+        old_service = self.services.pop(service_name, None)
+        if old_service:
+            old_service.stop()
+            self.used_ports.remove(old_service.port)
 
     def list_services(self):
-        pass
+        return self.services.keys()
 
     def show_service(self, service_name):
+        # TODO
         pass
 
     def scale_service(self, service_name, size):
-        pass
+        if service_name in self.services:
+            return self.services[service_name].scale(size)
+        else:
+            return False
 
     def _update(self):
-        pass
+        self.network.reload()
+        for container in self.core_containers:
+            container.reload()
+        for service in self.services.items():
+            service.reload()
 
     def cleanup(self):
-        pass
-
+        print "in function cleanup()..."
+        for container in (self.registry, self.registrator, self.proxy):
+            _stop_container(container)
+        for service in self.services.values():
+            service.stop()
+        try:
+            self.network.remove()
+        except:
+            pass
