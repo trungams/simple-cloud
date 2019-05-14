@@ -1,4 +1,5 @@
 import socket
+import sys
 from flask import Flask
 
 app = Flask(__name__)
@@ -13,4 +14,5 @@ def hello():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80, threaded=True)
+    port_to_listen = int(sys.argv[1])
+    app.run(host='0.0.0.0', port=port_to_listen, threaded=True)

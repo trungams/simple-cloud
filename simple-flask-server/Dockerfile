@@ -1,7 +1,5 @@
 FROM alpine:latest
 
-EXPOSE 80
-
 RUN apk add --no-cache python3 && \
     python3 -m ensurepip && \
     rm -r /usr/lib/python*/ensurepip && \
@@ -15,5 +13,5 @@ RUN pip install Flask
 WORKDIR /code
 COPY ./app.py /code/app.py
 
-ENTRYPOINT ["python"]
-CMD ["app.py"]
+ENTRYPOINT ["python", "app.py"]
+CMD ["80"]
