@@ -13,7 +13,7 @@ services:
     registrator:
         container_name: registrator
         image: gliderlabs/registrator:latest
-        command: -internal consul://consul:8500
+        command: -internal -retry-attempts 10 -retry-interval 100 consul://consul:8500
         volumes:
             - /var/run/docker.sock:/tmp/docker.sock
         networks:
@@ -67,7 +67,7 @@ services:
     another-flask-app:
         container_name: flask_03
         image: turtle144/cloud-simple-flask-server
-        command: 8080
+        command: "8080"
         environment:
             - SERVICE_NAME=another_flask_app
             - SERVICE_ID=aflask01

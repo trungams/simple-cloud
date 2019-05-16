@@ -21,8 +21,11 @@ docker_api_client = docker.APIClient(base_url="unix://var/run/docker.sock")
 
 
 def _check_alive_container(container):
-    container.reload()
-    return container.status == 'running'
+    try:
+        container.reload()
+        return container.status == 'running'
+    except:
+        return False
 
 
 def _stop_container(container):
@@ -108,7 +111,7 @@ class MyCloudService:
     def stop(self):
         """Stop all containers"""
         map(_stop_container, self.containers)
-        del self.containers
+        self.containers = []
 
     def __str__(self):
         """TODO"""
@@ -182,12 +185,12 @@ class MyCloud:
     def start_registrator(self):
         print "Starting registrator container"
 
-        # block this action until consul registry is up
-        while not _check_alive_container(self.registry):
-            pass
         self.registrator = docker_client.containers.run(
-            image="gliderlabs/registrator:latest",
-            command=["-internal", "consul://service-registry:8500"],
+            image="gliderlabs/registrator:v7",
+            command=["-internal",
+                     "-retry-attempts 10",
+                     "-retry-interval 100",
+                     "consul://service-registry:8500"],
             name="service-registrator",
             volumes=[
                 "/var/run/docker.sock:/tmp/docker.sock"
@@ -199,10 +202,6 @@ class MyCloud:
 
     def start_proxy(self):
         print "Starting consul-template container with HAProxy"
-
-        # block this action until registrator is up
-        while not _check_alive_container(self.registrator):
-            pass
 
         networking_config = docker_api_client.create_networking_config({
             self.network.name: docker_api_client.create_endpoint_config(
@@ -247,34 +246,38 @@ class MyCloud:
         for service in services_list:
             self.start_service(**service)
 
-    def stop_service(self, service_name):
-        old_service = self.services.pop(service_name, None)
+    def stop_service(self, name):
+        old_service = self.services.pop(name, None)
         if old_service:
             old_service.stop()
             self.used_ports.remove(old_service.port)
+            print "Removed service: %s" % old_service.name
+            return True
+        print "Service does not exist"
+        return False
 
     def list_services(self):
         return self.services.keys()
 
-    def show_service(self, service_name):
+    def show_service(self, name):
         # TODO
         pass
 
-    def scale_service(self, service_name, size):
-        if service_name in self.services:
-            return self.services[service_name].scale(size)
+    def scale_service(self, name, size):
+        if name in self.services:
+            return self.services[name].scale(size)
         else:
             return False
 
     def _update(self):
         self.network.reload()
-        for container in self.core_containers:
+        for container in (self.registry, self.registrator, self.proxy):
             container.reload()
-        for service in self.services.items():
+        for service in self.services.values():
             service.reload()
 
     def cleanup(self):
-        print "in function cleanup()..."
+        print "Cleaning up..."
         for container in (self.registry, self.registrator, self.proxy):
             _stop_container(container)
         for service in self.services.values():
@@ -283,3 +286,4 @@ class MyCloud:
             self.network.remove()
         except:
             pass
+        print "Removed running services and docker network"
