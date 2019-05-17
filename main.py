@@ -150,6 +150,10 @@ class CloudShell(Cmd, object):
             return None
         return {"name": argv[0]}
 
+    def complete_stop(self, text, *ignored):
+        _services = self.cloud.services
+        return [name for name in _services.keys() if name.startswith(text)]
+
     def do_stop(self, line):
         """Stop a running service if exists
 
@@ -164,6 +168,10 @@ class CloudShell(Cmd, object):
             self.stdout.write("Usage: show SERVICE_NAME\n")
             return None
         return {"name": argv[0]}
+
+    def complete_show(self, text, *ignored):
+        _services = self.cloud.services
+        return [name for name in _services.keys() if name.startswith(text)]
 
     def do_show(self, line):
         """Show information about a running service
@@ -195,6 +203,14 @@ class CloudShell(Cmd, object):
             "size": _parse_int(argv[1], 0)
         }
         return _kwargs
+
+    def complete_scale(self, text, *ignored):
+        argv = shlex.split(text)
+        if len(argv) <= 1:
+            _services = self.cloud.services
+            return [name for name in _services.keys() if name.startswith(text)]
+        else:
+            return []
 
     def do_scale(self, line):
         """Scale up/down a running service by adding/removing container
