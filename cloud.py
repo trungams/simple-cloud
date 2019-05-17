@@ -148,9 +148,18 @@ class MyCloud:
             self.start_network(subnet, network_name, self.reserved_addresses)
 
             # start service registry, discovery, proxy and services
-            self.start_registry()
-            self.start_registrator()
-            self.start_proxy()
+            # start proxy container first to reserve ip
+            self.create_proxy()
+            self.create_registry()
+            self.create_registrator()
+
+            print "Starting proxy, ",
+            self.proxy.start()
+            print "registry, ",
+            self.registry.start()
+            print "registrator...",
+            self.registrator.start()
+            print "OK"
 
             # run entrypoint script if there is one, after starting 3 core containers
             if entrypoint:
@@ -184,45 +193,60 @@ class MyCloud:
             attachable=True
         )
 
-    def start_registry(self):
-        print "Starting consul container"
+    def create_registry(self):
+        networking_config = docker_api_client.create_networking_config({
+            self.network.name: docker_api_client.create_endpoint_config()
+        })
 
-        self.registry = docker_client.containers.run(
+        host_config = docker_api_client.create_host_config(
+            restart_policy={
+                "Name": "on-failure",
+                "MaximumRetryCount": 10
+            }
+        )
+
+        container = docker_api_client.create_container(
             image="gliderlabs/consul-server:latest",
             command=["-bootstrap"],
             name="service-registry",
-            network=self.network.name,
+            host_config=host_config,
+            networking_config=networking_config,
+            detach=True
+        )
+
+        self.registry = docker_client.containers.get(container)
+
+    def create_registrator(self):
+        networking_config = docker_api_client.create_networking_config({
+            self.network.name: docker_api_client.create_endpoint_config()
+        })
+
+        host_config = docker_api_client.create_host_config(
             restart_policy={
                 "Name": "on-failure",
                 "MaximumRetryCount": 10
             },
-            detach=True
+            binds=[
+                "/var/run/docker.sock:/tmp/docker.sock"
+            ]
         )
 
-    def start_registrator(self):
-        print "Starting registrator container"
-
-        self.registrator = docker_client.containers.run(
+        container = docker_api_client.create_container(
             image="gliderlabs/registrator:v7",
             command=["-internal",
                      "-retry-attempts=10",
                      "-retry-interval=1000",
                      "consul://service-registry:8500"],
             name="service-registrator",
-            volumes=[
-                "/var/run/docker.sock:/tmp/docker.sock"
-            ],
-            network=self.network.name,
-            restart_policy={
-                "Name": "on-failure",
-                "MaximumRetryCount": 10
-            },
+            volumes=["/tmp/docker.sock"],
+            host_config=host_config,
+            networking_config=networking_config,
             detach=True
         )
 
-    def start_proxy(self):
-        print "Starting consul-template container with HAProxy"
+        self.registrator = docker_client.containers.get(container)
 
+    def create_proxy(self):
         networking_config = docker_api_client.create_networking_config({
             self.network.name: docker_api_client.create_endpoint_config(
                 ipv4_address=self.proxy_ip
@@ -252,7 +276,6 @@ class MyCloud:
         )
 
         self.proxy = docker_client.containers.get(container)
-        self.proxy.start()
 
     def start_service(self, image, name, port, scale=1, command=None):
         if name in self.services:
