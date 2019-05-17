@@ -30,7 +30,7 @@ def _check_alive_container(container):
 
 def _stop_container(container):
     try:
-        container.kill()
+        container.remove(force=True)
     except:
         pass
     finally:
@@ -60,7 +60,6 @@ class MyCloudService:
             name="%s_%02d" % (self.name, self.idx),
             command=self.command,
             network=self.network,
-            remove=True,
             detach=True,
             environment={
                 "SERVICE_NAME": self.name,
@@ -193,7 +192,10 @@ class MyCloud:
             command=["-bootstrap"],
             name="service-registry",
             network=self.network.name,
-            remove=True,
+            restart_policy={
+                "Name": "on-failure",
+                "MaximumRetryCount": 10
+            },
             detach=True
         )
 
@@ -211,7 +213,10 @@ class MyCloud:
                 "/var/run/docker.sock:/tmp/docker.sock"
             ],
             network=self.network.name,
-            remove=True,
+            restart_policy={
+                "Name": "on-failure",
+                "MaximumRetryCount": 10
+            },
             detach=True
         )
 
@@ -225,7 +230,10 @@ class MyCloud:
         })
 
         host_config = docker_api_client.create_host_config(
-            auto_remove=True,
+            restart_policy={
+                "Name": "on-failure",
+                "MaximumRetryCount": 10
+            },
             privileged=True
         )
 
