@@ -176,22 +176,27 @@ class MyCloud:
             self.reserved_addresses["gateway"] = self.gateway_ip
 
     def start_network(self, subnet, network_name, reserved_ips):
-        ipam_pool = docker.types.IPAMPool(
-            subnet=subnet,
-            aux_addresses=reserved_ips
-        )
+        network_list = docker_client.networks.list(names=[network_name])
 
-        ipam_config = docker.types.IPAMConfig(
-            driver="default",
-            pool_configs=[ipam_pool]
-        )
+        if len(network_list) > 0:
+            self.network = network_list[0]
+        else:
+            ipam_pool = docker.types.IPAMPool(
+                subnet=subnet,
+                aux_addresses=reserved_ips
+            )
 
-        self.network = docker_client.networks.create(
-            name=network_name,
-            driver="bridge",
-            ipam=ipam_config,
-            attachable=True
-        )
+            ipam_config = docker.types.IPAMConfig(
+                driver="default",
+                pool_configs=[ipam_pool]
+            )
+
+            self.network = docker_client.networks.create(
+                name=network_name,
+                driver="bridge",
+                ipam=ipam_config,
+                attachable=True
+            )
 
     def create_registry(self):
         networking_config = docker_api_client.create_networking_config({
