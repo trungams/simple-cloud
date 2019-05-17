@@ -13,7 +13,7 @@ Core components:
 """
 
 import docker
-import pprint
+import os
 
 
 docker_client = docker.from_env()
@@ -57,6 +57,7 @@ class MyCloudService:
     def _run_container(self):
         container = docker_client.containers.run(
             image=self.image,
+            name="%s_%02d" % (self.name, self.idx),
             command=self.command,
             network=self.network,
             remove=True,
@@ -71,8 +72,17 @@ class MyCloudService:
         return container
 
     def info(self):
-        """TODO: display information about the current service"""
-        pass
+        _info = {
+            "Image": self.image,
+            "Service name": self.name,
+            "Port": self.port,
+            "Number of containers": self.size,
+            "Containers": [
+                {c.id: c.name} for c in self.containers
+            ]
+        }
+
+        return _info
 
     def start(self, scale):
         """Start the service with an initial number of containers"""
@@ -114,13 +124,12 @@ class MyCloudService:
         self.containers = []
 
     def __str__(self):
-        """TODO"""
         return "Service: %s" % self.name
 
 
 class MyCloud:
-    def __init__(self, subnet=None, network_name=None, proxy_ip=None,
-                 gateway_ip=None, initial_services=None, *args, **kwargs):
+    def __init__(self, subnet=None, network_name=None, proxy_ip=None, gateway_ip=None,
+                 initial_services=None, entrypoint=None, *args, **kwargs):
         # declare variables for network stuff
         self.proxy_ip = proxy_ip
         self.gateway_ip = gateway_ip
@@ -143,7 +152,13 @@ class MyCloud:
             self.start_registry()
             self.start_registrator()
             self.start_proxy()
+
+            # run entrypoint script if there is one, after starting 3 core containers
+            if entrypoint:
+                os.system(entrypoint)
+
             self.initialize_services(initial_services)
+
         except Exception as e:
             print e
             self.cleanup()
@@ -188,8 +203,8 @@ class MyCloud:
         self.registrator = docker_client.containers.run(
             image="gliderlabs/registrator:v7",
             command=["-internal",
-                     "-retry-attempts 10",
-                     "-retry-interval 100",
+                     "-retry-attempts=10",
+                     "-retry-interval=1000",
                      "consul://service-registry:8500"],
             name="service-registrator",
             volumes=[
@@ -259,9 +274,11 @@ class MyCloud:
     def list_services(self):
         return self.services.keys()
 
-    def show_service(self, name):
-        # TODO
-        pass
+    def info_service(self, name):
+        if name in self.services:
+            return self.services[name].info()
+        else:
+            return {}
 
     def scale_service(self, name, size):
         if name in self.services:

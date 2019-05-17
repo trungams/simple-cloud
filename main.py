@@ -171,13 +171,19 @@ class CloudShell(Cmd, object):
         Usage: show SERVICE_NAME"""
         _kwargs = self._parse_show(line)
         if _kwargs:
-            self.cloud.show_service(_kwargs["name"])
+            _info = self.cloud.info_service(_kwargs["name"])
+            if not _info:
+                self.stdout.write("Can't retrieve service information\n")
+            else:
+                self.stdout.write(json.dumps(_info, indent=2))
+                self.stdout.write("\n")
 
     def do_list(self, line):
         """List all running services
 
         Usage: list"""
-        self.cloud.list_services()
+        services = self.cloud.list_services()
+        self.stdout.write("\n".join(services) + "\n")
 
     def _parse_scale(self, line):
         argv = shlex.split(line)
@@ -196,7 +202,7 @@ class CloudShell(Cmd, object):
         Usage: scale SERVICE_NAME SIZE"""
         _kwargs = self._parse_scale(line)
         if _kwargs:
-            self.cloud.scale(_kwargs["name"], _kwargs["size"])
+            self.cloud.scale_service(_kwargs["name"], _kwargs["size"])
 
     def do_exit(self, line):
         """Remove cloud services and exit the shell
