@@ -14,6 +14,7 @@ Core components:
 
 import docker
 import os
+import traceback
 
 
 docker_client = docker.from_env()
@@ -165,10 +166,12 @@ class MyCloud:
             if entrypoint:
                 os.system(entrypoint)
 
-            self.initialize_services(initial_services)
+            if initial_services:
+                self.initialize_services(initial_services)
 
         except Exception as e:
             print e
+            traceback.print_exc()
             self.cleanup()
 
     def reserve_ips(self):

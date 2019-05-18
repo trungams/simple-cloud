@@ -134,7 +134,7 @@ class CloudShell(Cmd, object):
 
         By default, initial scale is 1"""
         _kwargs = self._parse_start(line)
-        if not kwargs:
+        if not _kwargs:
             return
         else:
             try:
