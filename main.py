@@ -11,6 +11,8 @@ from cmd import Cmd
 import shlex
 from inspect import cleandoc
 from collections import defaultdict
+import traceback
+import signal
 
 
 def _parse_int(token, default=0):
@@ -119,10 +121,10 @@ class CloudShell(Cmd, object):
         _kwargs = _parse_args(argv)
         _parsed = {
             "image": argv[0],
-            "service_name": argv[1],
+            "name": argv[1],
             "port": _parse_int(argv[2], 80),
-            "scale": kwargs["scale"],
-            "command": kwargs["command"]
+            "scale": _parse_int(_kwargs["scale"]),
+            "command": _kwargs["command"]
         }
 
         return _parsed
@@ -318,6 +320,12 @@ if __name__ == "__main__":
         kwargs = vars(parsed)
 
     my_cloud = None
+
+    def sigterm_handler(_signo, _stack_frame):
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, sigterm_handler)
+
     try:
         print "Starting services.... "
         my_cloud = cloud.MyCloud(**kwargs)
@@ -325,11 +333,9 @@ if __name__ == "__main__":
         cloud_shell = CloudShell(my_cloud)
         cloud_shell.cmdloop()
     except Exception as e:
-        sys.stderr.write("Error occurred:\n")
-        sys.stderr.write(str(e))
+        traceback.print_exc()
     finally:
         if my_cloud:
-            try:
-                my_cloud.cleanup()
-            except Exception as e:
-                print e
+            my_cloud.cleanup()
+        print "Bye"
+
