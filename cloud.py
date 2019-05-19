@@ -164,6 +164,8 @@ class MyCloud:
 
             # run entrypoint script if there is one, after starting 3 core containers
             if entrypoint:
+                self.proxy.restart()    # avoid some weird race condition that leads to proxy failing
+                print "executing entrypoint script..."
                 os.system(entrypoint)
 
             if initial_services:
