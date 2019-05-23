@@ -264,9 +264,11 @@ class MyCloud:
         if self.proxy_entrypoint:
             proxy_binds = ["%s:/root/entry/custom-entrypoint.sh" % self.proxy_entrypoint]
             proxy_volumes = ["/root/entry/custom-entrypoint.sh"]
+            proxy_entrypoint = "/root/entry/custom-entrypoint.sh"
         else:
             proxy_binds = []
             proxy_volumes = []
+            proxy_entrypoint = None
 
         host_config = docker_api_client.create_host_config(
             restart_policy={
@@ -279,7 +281,7 @@ class MyCloud:
 
         container = docker_api_client.create_container(
             image="turtle144/cloud-consul-template-haproxy",
-            entrypoint=self.proxy_entrypoint,
+            entrypoint=proxy_entrypoint,
             command=[
                 "consul-template",
                 "-config=/tmp/haproxy.conf",
