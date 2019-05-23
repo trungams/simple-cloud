@@ -140,6 +140,7 @@ class MyCloud:
         self.registry_name = "service-registry-%s" % network_name
         self.registrator_name = "service-registrator-%s" % network_name
         self.proxy_name = "proxy-%s" % network_name
+        self.proxy_entrypoint = entrypoint
         self.registry = None
         self.registrator = None
         self.proxy = None
@@ -164,12 +165,6 @@ class MyCloud:
             print "registrator...",
             self.registrator.start()
             print "OK"
-
-            # run entrypoint script if there is one, after starting 3 core containers
-            if entrypoint:
-                self.proxy.restart()    # avoid some weird race condition that leads to proxy failing
-                print "executing entrypoint script..."
-                os.system(entrypoint)
 
             if initial_services:
                 self.initialize_services(initial_services)
@@ -276,6 +271,7 @@ class MyCloud:
 
         container = docker_api_client.create_container(
             image="turtle144/cloud-consul-template-haproxy",
+            entrypoint=self.proxy_entrypoint,
             command=[
                 "consul-template",
                 "-config=/tmp/haproxy.conf",
