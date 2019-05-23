@@ -261,11 +261,19 @@ class MyCloud:
             )
         })
 
+        if self.proxy_entrypoint:
+            proxy_binds = ["%s:/root/entry/custom-entrypoint.sh" % self.proxy_entrypoint]
+            proxy_volumes = ["/root/entry/custom-entrypoint.sh"]
+        else:
+            proxy_binds = []
+            proxy_volumes = []
+
         host_config = docker_api_client.create_host_config(
             restart_policy={
                 "Name": "on-failure",
                 "MaximumRetryCount": 10
             },
+            binds=proxy_binds,
             privileged=True
         )
 
@@ -278,6 +286,7 @@ class MyCloud:
                 "-consul=%s:8500" % self.registry_name,
                 "-log-level=debug"
             ],
+            volumes=proxy_volumes,
             name=self.proxy_name,
             host_config=host_config,
             networking_config=networking_config,
