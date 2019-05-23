@@ -123,7 +123,7 @@ class CloudShell(Cmd, object):
             "image": argv[0],
             "name": argv[1],
             "port": _parse_int(argv[2], 80),
-            "scale": _parse_int(_kwargs["scale"]),
+            "scale": _parse_int(_kwargs["scale"], 1),
             "command": _kwargs["command"]
         }
 

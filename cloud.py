@@ -58,7 +58,7 @@ class MyCloudService:
     def _run_container(self):
         container = docker_client.containers.run(
             image=self.image,
-            name="%s_%02d" % (self.name, self.idx),
+            name="%s_%02d_%s" % (self.name, self.idx, self.network),
             command=self.command,
             network=self.network,
             detach=True,
@@ -78,7 +78,7 @@ class MyCloudService:
             "Port": self.port,
             "Number of containers": self.size,
             "Containers": [
-                {c.id: c.name} for c in self.containers
+                {c.id[:12]: c.name} for c in self.containers
             ]
         }
 
@@ -137,6 +137,9 @@ class MyCloud:
         self.network = None
 
         # create variables for important containers
+        self.registry_name = "service-registry-%s" % network_name
+        self.registrator_name = "service-registrator-%s" % network_name
+        self.proxy_name = "proxy-%s" % network_name
         self.registry = None
         self.registrator = None
         self.proxy = None
@@ -218,7 +221,7 @@ class MyCloud:
         container = docker_api_client.create_container(
             image="gliderlabs/consul-server:latest",
             command=["-bootstrap"],
-            name="service-registry",
+            name=self.registry_name,
             host_config=host_config,
             networking_config=networking_config,
             detach=True
@@ -246,8 +249,8 @@ class MyCloud:
             command=["-internal",
                      "-retry-attempts=10",
                      "-retry-interval=1000",
-                     "consul://service-registry:8500"],
-            name="service-registrator",
+                     "consul://%s:8500" % self.registry_name],
+            name=self.registrator_name,
             volumes=["/tmp/docker.sock"],
             host_config=host_config,
             networking_config=networking_config,
@@ -276,10 +279,10 @@ class MyCloud:
             command=[
                 "consul-template",
                 "-config=/tmp/haproxy.conf",
-                "-consul=service-registry:8500",
+                "-consul=%s:8500" % self.registry_name,
                 "-log-level=debug"
             ],
-            name="proxy",
+            name=self.proxy_name,
             host_config=host_config,
             networking_config=networking_config,
             detach=True
