@@ -214,7 +214,7 @@ class MyCloud:
         )
 
         container = docker_api_client.create_container(
-            image="gliderlabs/consul-server:latest",
+            image="citelab/consul-server:latest",
             command=["-bootstrap"],
             name=self.registry_name,
             host_config=host_config,
@@ -240,8 +240,9 @@ class MyCloud:
         )
 
         container = docker_api_client.create_container(
-            image="gliderlabs/registrator:v7",
+            image="citelab/registrator:latest",
             command=["-internal",
+                     "-network=%s" % self.network.name,
                      "-retry-attempts=10",
                      "-retry-interval=1000",
                      "consul://%s:8500" % self.registry_name],
@@ -280,7 +281,7 @@ class MyCloud:
         )
 
         container = docker_api_client.create_container(
-            image="turtle144/cloud-consul-template-haproxy",
+            image="citelab/haproxy:latest",
             entrypoint=proxy_entrypoint,
             command=[
                 "consul-template",
