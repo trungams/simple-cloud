@@ -13,12 +13,21 @@ Core components:
 """
 
 import docker
-import os
+import requests
+import base64
 import traceback
 
 
 docker_client = docker.from_env()
 docker_api_client = docker.APIClient(base_url="unix://var/run/docker.sock")
+
+proxy_configs = {
+    'mode': ('tcp', 'http'),
+    'balance': (
+        'roundrobin', 'static-rr', 'leastconn',
+        'first', 'source', 'uri', 'url_param', 'rdp-cookie'
+    )
+}
 
 
 def _check_alive_container(container):
@@ -47,6 +56,8 @@ class MyCloudService:
         self.command = command
         self.containers = []
         self.idx = 1
+        self.mode = None
+        self.balance = None
         # start the current services with a number of running containers
         self.start(init_scale)
 
@@ -79,7 +90,9 @@ class MyCloudService:
             "Number of containers": self.size,
             "Containers": [
                 {c.id[:12]: c.name} for c in self.containers
-            ]
+            ],
+            "Mode": self.mode or 'tcp',
+            "LB algorithm": self.balance or 'roundrobin'
         }
 
         return _info
@@ -297,6 +310,52 @@ class MyCloud:
         )
 
         self.proxy = docker_client.containers.get(container)
+
+    @property
+    def registry_ip(self):
+        info = docker_api_client.inspect_container(self.registry_name)
+        registry_ip = info['NetworkSettings']['Networks'][self.network.name]['IPAddress']
+        return registry_ip
+
+    def registry_update(self, service, key, value=None, action='put'):
+        if service not in self.services:
+            return False
+        if key not in proxy_configs or value not in proxy_configs[key]:
+            return False
+
+        # craft uri from arguments
+        uri = 'http://%s:8500/v1/kv/service/%s/%s' % (self.registry_ip, service, key)
+        if action == 'put' and value is not None:
+            resp = requests.put(uri, data=value)
+            if resp.json():    # success
+                setattr(self.services[service], key, value)
+                return True
+            return False
+        elif action == 'delete':
+            resp = requests.delete(uri)
+            if resp.json():
+                setattr(self.services[service], key, None)
+                return True
+            return False
+        else:
+            return False
+
+    def registry_get(self, service, key):
+        if service not in self.services:
+            return False
+        if key not in proxy_configs:
+            return False
+
+        # craft uri from arguments
+        uri = 'http://%s:8500/v1/kv/service/%s/%s'
+        resp = requests.get(uri)
+
+        # returns default values if key does not exists
+        if resp.status_code == 404:
+            return 'tcp' if key == 'mode' else 'roundrobin'
+        else:
+            value = resp.json()[0]['Value']
+            return base64.b64decode(value)
 
     def start_service(self, image, name, port, scale=1, command=None):
         if name in self.services:

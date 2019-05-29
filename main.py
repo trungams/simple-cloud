@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import cloud
+from cmd import Cmd
 
 import os
 import sys
+import webbrowser
 import json
 import argparse
-import cloud
-from cmd import Cmd
 import shlex
 from inspect import cleandoc
 from collections import defaultdict
@@ -38,11 +39,14 @@ def _parse_args(argv):
     If more than one arguments with the same name is used, the last value will be used
     """
     values = defaultdict(str)
+    new_argv = []
     for token in argv:
         if token[:2] == "--":
             arg, val = token[2:].split("=", 1)
             values[arg] = val
-    return values
+        else:
+            new_argv.append(token)
+    return values, new_argv
 
 
 class CloudShell(Cmd, object):
@@ -118,7 +122,7 @@ class CloudShell(Cmd, object):
             self.stdout.write("Usage: start IMAGE SERVICE_NAME PORT "
                               "[--scale=INITIAL_SCALE] [--command=COMMAND]\n")
             return None
-        _kwargs = _parse_args(argv)
+        _kwargs, argv = _parse_args(argv)
         _parsed = {
             "image": argv[0],
             "name": argv[1],
@@ -153,8 +157,8 @@ class CloudShell(Cmd, object):
         return {"name": argv[0]}
 
     def complete_stop(self, text, *ignored):
-        _services = self.cloud.services
-        return [name for name in _services.keys() if name.startswith(text)]
+        _services = self.cloud.list_services()
+        return [name for name in _services if name.startswith(text)]
 
     def do_stop(self, line):
         """Stop a running service if exists
@@ -172,8 +176,8 @@ class CloudShell(Cmd, object):
         return {"name": argv[0]}
 
     def complete_show(self, text, *ignored):
-        _services = self.cloud.services
-        return [name for name in _services.keys() if name.startswith(text)]
+        _services = self.cloud.list_services()
+        return [name for name in _services if name.startswith(text)]
 
     def do_show(self, line):
         """Show information about a running service
@@ -209,8 +213,8 @@ class CloudShell(Cmd, object):
     def complete_scale(self, text, *ignored):
         argv = shlex.split(text)
         if len(argv) <= 1:
-            _services = self.cloud.services
-            return [name for name in _services.keys() if name.startswith(text)]
+            _services = self.cloud.list_services()
+            return [name for name in _services if name.startswith(text)]
         else:
             return []
 
@@ -221,6 +225,61 @@ class CloudShell(Cmd, object):
         _kwargs = self._parse_scale(line)
         if _kwargs:
             self.cloud.scale_service(_kwargs["name"], _kwargs["size"])
+
+    def _parse_config(self, line):
+        argv = shlex.split(line)
+        if len(argv) < 3:
+            self.stdout.write("Usage: config SERVICE_NAME KEY VALUE [--action=<delete|put>]")
+            return None
+        _parsed, argv = _parse_args(argv)
+        _action = _parsed.get("action", "put").lower()
+        if _action not in ("put", "delete"):
+            return None
+        _kwargs = {
+            "service": argv[0],
+            "key": argv[1],
+            "value": argv[2],
+            "action": _action
+        }
+        return _kwargs
+
+    def complete_config(self, text, line, *ignored):
+        argv = shlex.split(line)
+        if (len(argv) == 1 and not text) \
+                or (len(argv) == 2 and text):
+            _services = self.cloud.list_services()
+            return [name for name in _services if name.startswith(text)]
+        elif (len(argv) == 2 and not text) \
+                or (len(argv) == 3 and text):
+            _keys = cloud.proxy_configs.keys()
+            return [k for k in _keys if k.startswith(text)]
+        elif (len(argv) == 3 and not text) \
+                or (len(argv) == 4 and text):
+            _values = cloud.proxy_configs.get(argv[2], [])
+            return [v for v in _values if v.startswith(text)]
+
+    def do_config(self, line):
+        """Configure a service's load balancing scheme
+
+        Usage: config SERVICE_NAME <mode|balance> VALUE"""
+        _kwargs = self._parse_config(line)
+        if not _kwargs:
+            return
+        else:
+            if self.cloud.registry_update(
+                _kwargs["service"], _kwargs["key"],
+                _kwargs["value"], _kwargs["action"]
+            ):
+                sys.stdout.write("Updated!\n")
+            else:
+                sys.stdout.write("Cannot update service\n")
+
+    def do_stats(self, line):
+        """Show statistics in a web browser
+
+        Usage: stats"""
+        url = 'http://%s:10000/stats' % self.cloud.proxy_ip
+        webbrowser.open(url)
 
     def do_exit(self, line):
         """Remove cloud services and exit the shell

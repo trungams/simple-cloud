@@ -9,14 +9,14 @@
         "image": "turtle144/simple-flask-server",
         "name": "simple_webserver",
         "port": 80,
-        "scale": 5,
+        "scale": 2,
         "command": "80"
       },
       {
         "image": "turtle144/simple-flask-server",
         "name": "another_webserver",
         "port": 8080,
-        "scale": 5,
+        "scale": 1,
         "command": "8080"
       }
     ]
