@@ -24,7 +24,6 @@ services:
 
     proxy:
         container_name: consul-template-haproxy
-        # build: ./consul-template-haproxy
         image: citelab/haproxy:latest
         command: consul-template -config=/tmp/haproxy.conf -consul=consul:8500 -log-level=debug
         #volumes:

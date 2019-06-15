@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3.7
+# -*- coding: utf-8 -*-
 
 """This is a simple cloud program running docker containers. The program provides
 an API to view and monitor services running in the cloud.
@@ -13,13 +14,11 @@ Core components:
 """
 
 import docker
+from simplecloud import docker_client, docker_api_client, logger
 import requests
 import base64
 import traceback
 
-
-docker_client = docker.from_env()
-docker_api_client = docker.APIClient(base_url="unix://var/run/docker.sock")
 
 proxy_configs = {
     'mode': ('tcp', 'http'),
@@ -40,6 +39,7 @@ def _check_alive_container(container):
 
 def _stop_container(container):
     try:
+        logger.info(f'Stopping container {container.id}')
         container.remove(force=True)
     except:
         pass
@@ -48,11 +48,13 @@ def _stop_container(container):
 
 
 class MyCloudService:
-    def __init__(self, image, name, network, port, init_scale=1, command=None):
+    def __init__(self, image, name, network, port,
+                 init_scale=1, command=None, netmanager=None):
         self.image = image
         self.name = name
         self.port = port
         self.network = network
+        self.netmanager = netmanager or None
         self.command = command
         self.containers = []
         self.idx = 1
@@ -66,11 +68,15 @@ class MyCloudService:
         self.reload()
         return len(self.containers)
 
+    def _create_container(self):
+        pass
+
     def _run_container(self):
         container = docker_client.containers.run(
             image=self.image,
             name="%s_%02d_%s" % (self.name, self.idx, self.network),
             command=self.command,
+            auto_remove=True,
             network=self.network,
             detach=True,
             environment={
@@ -104,11 +110,11 @@ class MyCloudService:
                 container = self._run_container()
                 self.containers.append(container)
             except Exception as e:
-                print e
+                logger.error(e)
 
     def reload(self):
         """Refresh the docker client for up-to-date containers status"""
-        self.containers = filter(_check_alive_container, self.containers)
+        self.containers = list(filter(_check_alive_container, self.containers))
 
     def scale(self, new_size):
         """Scale up or down the current service"""
@@ -119,7 +125,8 @@ class MyCloudService:
             return True
         elif new_size < cur_size:
             # stop some running containers
-            map(_stop_container, self.containers[new_size:])
+            for container in self.containers[new_size:]:
+                _stop_container(container)
             self.reload()
         else:
             # start new containers
@@ -128,12 +135,13 @@ class MyCloudService:
                     container = self._run_container()
                     self.containers.append(container)
                 except Exception as e:
-                    print e
+                    logger.error(e)
         return True
 
     def stop(self):
         """Stop all containers"""
-        map(_stop_container, self.containers)
+        for container in self.containers:
+            _stop_container(container)
         self.containers = []
 
     def __str__(self):
@@ -148,6 +156,7 @@ class MyCloud:
         self.gateway_ip = gateway_ip
         self.reserved_addresses = {}
         self.network = None
+        self.netmanager = None
 
         # create variables for important containers
         self.registry_name = "service-registry-%s" % network_name
@@ -160,6 +169,8 @@ class MyCloud:
         self.services = {}
         self.used_ports = set()
 
+        self.running = True
+
         try:
             # start the network
             self.reserve_ips()
@@ -171,20 +182,20 @@ class MyCloud:
             self.create_registry()
             self.create_registrator()
 
-            print "Starting proxy, ",
             self.proxy.start()
-            print "registry, ",
+            logger.info("Proxy has been started")
             self.registry.start()
-            print "registrator...",
+            logger.info("Service registry has been started")
             self.registrator.start()
-            print "OK"
+            logger.info("Service registrator has been started")
 
             if initial_services:
                 self.initialize_services(initial_services)
 
         except Exception as e:
-            print e
-            traceback.print_exc()
+            logger.error(''.join(
+                traceback.format_exception(
+                    type(e), e, e.__traceback__)))
             self.cleanup()
 
     def reserve_ips(self):
@@ -359,12 +370,14 @@ class MyCloud:
 
     def start_service(self, image, name, port, scale=1, command=None):
         if name in self.services:
-            print "Service %s already exists!" % name
+            logger.warning(f"Service {name} already exists")
             return
         if port in self.used_ports:
-            print "Port %d has already been used!" % port
+            logger.warning(f"Port {port} has already been used!")
             return
-        new_service = MyCloudService(image, name, self.network.name, port, scale, command)
+        new_service = MyCloudService(
+            image, name, self.network.name,
+            port, scale, command, self.netmanager)
         self.services[name] = new_service
         self.used_ports.add(port)
 
@@ -377,9 +390,9 @@ class MyCloud:
         if old_service:
             old_service.stop()
             self.used_ports.remove(old_service.port)
-            print "Removed service: %s" % old_service.name
+            logger.info(f"Removed service: {old_service.name}")
             return True
-        print "Service does not exist"
+        logger.warning(f"Service {name} does not exist")
         return False
 
     def list_services(self):
@@ -405,7 +418,7 @@ class MyCloud:
             service.reload()
 
     def cleanup(self):
-        print "Cleaning up..."
+        logger.debug("Cleaning up everything")
         for container in (self.registry, self.registrator, self.proxy):
             _stop_container(container)
         for service in self.services.values():
@@ -414,4 +427,10 @@ class MyCloud:
             self.network.remove()
         except:
             pass
-        print "Removed running services and docker network"
+
+        self.running = False
+        logger.debug("Removed running services and docker network")
+
+    def register_netmanager(self, manager):
+        self.netmanager = manager
+        logger.debug('Network manager registered')

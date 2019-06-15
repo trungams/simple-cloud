@@ -1,11 +1,12 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3.7
 # -*- coding: utf-8 -*-
 
-import cloud
+from simplecloud import cloud, logger, netmanager
 from cmd import Cmd
 
 import os
 import sys
+from threading import Thread
 import webbrowser
 import json
 import argparse
@@ -60,7 +61,6 @@ class CloudShell(Cmd, object):
         super(CloudShell, self).__init__(*args, **kwargs)
         self.cloud = cloud_obj
         self.prompt = "(%s) >> " % self.cloud.proxy_ip
-        os.system("clear")
 
     def cmdloop(self, intro=None):
         """Override Cmd.cmdloop to add handler for SIGINT
@@ -68,6 +68,7 @@ class CloudShell(Cmd, object):
         off the received input, and dispatch to action methods, passing them
         the remainder of the line as argument.
         """
+        os.system("clear")
 
         self.preloop()
         if self.use_rawinput and self.completekey:
@@ -90,7 +91,7 @@ class CloudShell(Cmd, object):
                 else:
                     if self.use_rawinput:
                         try:
-                            line = raw_input(self.prompt)
+                            line = input(self.prompt)
                         except EOFError:
                             line = 'EOF'
                         except KeyboardInterrupt:
@@ -285,8 +286,9 @@ class CloudShell(Cmd, object):
         """Remove cloud services and exit the shell
 
         Usage: exit | EOF"""
-        self.cloud.cleanup()
-        self.stdout.write("Bye\n")
+
+        if self.cloud.running:
+            self.cloud.cleanup()
         return True
 
     do_EOF = do_exit
@@ -335,7 +337,7 @@ def parse_file(config_path):
     if "subnet" not in configs:
         raise KeyNotFoundError("You need to specify the subnet range")
 
-    print(json.dumps(configs, indent=2, sort_keys=True))
+    logger.info(json.dumps(configs, indent=2, sort_keys=True))
 
     return configs
 
@@ -386,15 +388,29 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, sigterm_handler)
 
     try:
-        print "Starting services.... "
-        my_cloud = cloud.MyCloud(**kwargs)
-        print "Everything is up"
-        cloud_shell = CloudShell(my_cloud)
-        cloud_shell.cmdloop()
-    except Exception as e:
-        traceback.print_exc()
-    finally:
-        if my_cloud:
-            my_cloud.cleanup()
-        print "Bye"
+        logger.debug("Starting services...")
 
+        my_cloud = cloud.MyCloud(**kwargs)
+        network_manager = netmanager.NetworkManager(my_cloud.network.id)
+        my_cloud.register_netmanager(network_manager)
+
+        logger.debug("Everything is up")
+        cloud_shell = CloudShell(my_cloud)
+
+        def listener_loop():
+            network_manager.listen()
+
+        t = Thread(target=listener_loop, daemon=True)
+        t.start()
+
+        cloud_shell.cmdloop()
+
+    except Exception as e:
+        logger.error(''.join(
+                traceback.format_exception(
+                    type(e), e, e.__traceback__)))
+    finally:
+        if my_cloud.running:
+            my_cloud.cleanup()
+        logger.info('Bye')
+        sys.exit()
