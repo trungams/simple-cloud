@@ -15,6 +15,7 @@ Core components:
 
 import docker
 from simplecloud import docker_client, docker_api_client, logger
+from simplecloud.network import BridgeNetwork
 import requests
 import base64
 import traceback
@@ -49,17 +50,20 @@ def _stop_container(container):
 
 class MyCloudService:
     def __init__(self, image, name, network, port,
-                 init_scale=1, command=None, netmanager=None):
+                 init_scale=1, command=None, is_ovs=False):
         self.image = image
         self.name = name
         self.port = port
-        self.network = network
-        self.netmanager = netmanager or None
         self.command = command
+
+        self.network = network
+        self.ovs = is_ovs
+
         self.containers = []
         self.idx = 1
         self.mode = None
         self.balance = None
+
         # start the current services with a number of running containers
         self.start(init_scale)
 
@@ -69,23 +73,42 @@ class MyCloudService:
         return len(self.containers)
 
     def _create_container(self):
-        pass
+        # networking_config = docker_api_client.create_networking_config({
+        #     self.network: docker_api_client.create_endpoint_config(
+        #         ipv4_address=ipaddr
+        #     )
+        # })
+
+        host_config = docker_api_client.create_host_config(
+            auto_remove=True,
+            port_bindings={
+                self.port: None
+            }
+        )
+
+        pending_container = docker_api_client.create_container(
+            image=self.image,
+            name=f'{self.name}_{self.idx:02d}_{self.network.name}',
+            command=self.command,
+            detach=True,
+            # networking_config=networking_config,
+            host_config=host_config,
+            ports=[self.port],
+            environment={
+                'SERVICE_NAME': self.name,
+                'SERVICE_ID': f'{self.name}_{self.idx:02d}'
+            }
+        )
+
+        container = docker_client.containers.get(pending_container)
+        self.network.add_container(container)
+        self.idx += 1
+
+        return container
 
     def _run_container(self):
-        container = docker_client.containers.run(
-            image=self.image,
-            name="%s_%02d_%s" % (self.name, self.idx, self.network),
-            command=self.command,
-            auto_remove=True,
-            network=self.network,
-            detach=True,
-            environment={
-                "SERVICE_NAME": self.name,
-                "SERVICE_ID": "%s_%02d" % (self.name, self.idx)
-            },
-            ports={self.port: None}
-        )
-        self.idx += 1
+        container = self._create_container()
+        container.start()
         return container
 
     def info(self):
@@ -145,18 +168,33 @@ class MyCloudService:
         self.containers = []
 
     def __str__(self):
-        return "Service: %s" % self.name
+        return f'Service: {self.name}'
 
 
 class MyCloud:
     def __init__(self, subnet=None, network_name=None, proxy_ip=None, gateway_ip=None,
                  initial_services=None, entrypoint=None, *args, **kwargs):
+        self.running = True
+
         # declare variables for network stuff
         self.proxy_ip = proxy_ip
         self.gateway_ip = gateway_ip
-        self.reserved_addresses = {}
-        self.network = None
-        self.netmanager = None
+
+        reservations = {
+            'proxy': proxy_ip,
+            'gateway': gateway_ip
+        }
+
+        if not proxy_ip:
+            reservations.pop('proxy')
+        if not gateway_ip:
+            reservations.pop('gateway')
+
+        self.network = BridgeNetwork(
+            network_name,
+            subnet,
+            reservations
+        )
 
         # create variables for important containers
         self.registry_name = "service-registry-%s" % network_name
@@ -169,13 +207,7 @@ class MyCloud:
         self.services = {}
         self.used_ports = set()
 
-        self.running = True
-
         try:
-            # start the network
-            self.reserve_ips()
-            self.start_network(subnet, network_name, self.reserved_addresses)
-
             # start service registry, discovery, proxy and services
             # start proxy container first to reserve ip
             self.create_proxy()
@@ -198,38 +230,7 @@ class MyCloud:
                     type(e), e, e.__traceback__)))
             self.cleanup()
 
-    def reserve_ips(self):
-        if self.gateway_ip:
-            self.reserved_addresses["gateway"] = self.gateway_ip
-
-    def start_network(self, subnet, network_name, reserved_ips):
-        network_list = docker_client.networks.list(names=[network_name])
-
-        if len(network_list) > 0:
-            self.network = network_list[0]
-        else:
-            ipam_pool = docker.types.IPAMPool(
-                subnet=subnet,
-                aux_addresses=reserved_ips
-            )
-
-            ipam_config = docker.types.IPAMConfig(
-                driver="default",
-                pool_configs=[ipam_pool]
-            )
-
-            self.network = docker_client.networks.create(
-                name=network_name,
-                driver="bridge",
-                ipam=ipam_config,
-                attachable=True
-            )
-
     def create_registry(self):
-        networking_config = docker_api_client.create_networking_config({
-            self.network.name: docker_api_client.create_endpoint_config()
-        })
-
         host_config = docker_api_client.create_host_config(
             restart_policy={
                 "Name": "on-failure",
@@ -237,22 +238,21 @@ class MyCloud:
             }
         )
 
+        ipaddr = self.network.get_available_ip()
+
         container = docker_api_client.create_container(
             image="citelab/consul-server:latest",
-            command=["-bootstrap"],
+            command=["-bootstrap", f'-advertise={ipaddr}'],
             name=self.registry_name,
             host_config=host_config,
-            networking_config=networking_config,
             detach=True
         )
 
         self.registry = docker_client.containers.get(container)
 
-    def create_registrator(self):
-        networking_config = docker_api_client.create_networking_config({
-            self.network.name: docker_api_client.create_endpoint_config()
-        })
+        self.network.add_container(self.registry, ipaddr)
 
+    def create_registrator(self):
         host_config = docker_api_client.create_host_config(
             restart_policy={
                 "Name": "on-failure",
@@ -273,18 +273,14 @@ class MyCloud:
             name=self.registrator_name,
             volumes=["/tmp/docker.sock"],
             host_config=host_config,
-            networking_config=networking_config,
             detach=True
         )
 
         self.registrator = docker_client.containers.get(container)
 
+        self.network.add_container(self.registrator)
+
     def create_proxy(self):
-        networking_config = docker_api_client.create_networking_config({
-            self.network.name: docker_api_client.create_endpoint_config(
-                ipv4_address=self.proxy_ip
-            )
-        })
 
         if self.proxy_entrypoint:
             proxy_binds = ["%s:/root/entry/custom-entrypoint.sh" % self.proxy_entrypoint]
@@ -316,11 +312,12 @@ class MyCloud:
             volumes=proxy_volumes,
             name=self.proxy_name,
             host_config=host_config,
-            networking_config=networking_config,
             detach=True
         )
 
         self.proxy = docker_client.containers.get(container)
+
+        self.network.add_container(self.proxy, reservation='proxy')
 
     @property
     def registry_ip(self):
@@ -376,8 +373,8 @@ class MyCloud:
             logger.warning(f"Port {port} has already been used!")
             return
         new_service = MyCloudService(
-            image, name, self.network.name,
-            port, scale, command, self.netmanager)
+            image, name, self.network,
+            port, scale, command)
         self.services[name] = new_service
         self.used_ports.add(port)
 
@@ -430,7 +427,3 @@ class MyCloud:
 
         self.running = False
         logger.debug("Removed running services and docker network")
-
-    def register_netmanager(self, manager):
-        self.netmanager = manager
-        logger.debug('Network manager registered')

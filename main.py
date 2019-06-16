@@ -391,14 +391,12 @@ if __name__ == "__main__":
         logger.debug("Starting services...")
 
         my_cloud = cloud.MyCloud(**kwargs)
-        network_manager = netmanager.NetworkManager(my_cloud.network.id)
-        my_cloud.register_netmanager(network_manager)
 
         logger.debug("Everything is up")
         cloud_shell = CloudShell(my_cloud)
 
         def listener_loop():
-            network_manager.listen()
+            my_cloud.network.listen()
 
         t = Thread(target=listener_loop, daemon=True)
         t.start()
@@ -410,7 +408,7 @@ if __name__ == "__main__":
                 traceback.format_exception(
                     type(e), e, e.__traceback__)))
     finally:
-        if my_cloud.running:
+        if my_cloud and my_cloud.running:
             my_cloud.cleanup()
         logger.info('Bye')
         sys.exit()
