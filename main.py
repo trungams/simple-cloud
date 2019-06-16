@@ -1,7 +1,7 @@
 #!/usr/bin/env python3.7
 # -*- coding: utf-8 -*-
 
-from simplecloud import cloud, logger, netmanager
+from simplecloud import cloud, logger
 from cmd import Cmd
 
 import os

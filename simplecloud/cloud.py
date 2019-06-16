@@ -149,6 +149,7 @@ class MyCloudService:
         elif new_size < cur_size:
             # stop some running containers
             for container in self.containers[new_size:]:
+                self.network.remove_container(container.id)
                 _stop_container(container)
             self.reload()
         else:
@@ -164,6 +165,7 @@ class MyCloudService:
     def stop(self):
         """Stop all containers"""
         for container in self.containers:
+            self.network.remove_container(container.id)
             _stop_container(container)
         self.containers = []
 
@@ -417,6 +419,7 @@ class MyCloud:
     def cleanup(self):
         logger.debug("Cleaning up everything")
         for container in (self.registry, self.registrator, self.proxy):
+            self.network.remove_container(container.id)
             _stop_container(container)
         for service in self.services.values():
             service.stop()

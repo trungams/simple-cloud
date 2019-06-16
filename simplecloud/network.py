@@ -19,6 +19,10 @@ class BaseNetwork(ABC):
         ...
 
     @abstractmethod
+    def get_available_ip(self):
+        ...
+
+    @abstractmethod
     def listen(self):
         ...
 
@@ -115,13 +119,13 @@ class BridgeNetwork(BaseNetwork):
         except KeyError:
             pass
         finally:
-            logger.info(f'Address {ip} is now in use')
+            logger.debug(f'Address {ip} is now in use')
             return addr
 
     def _add_ip(self, ip):
         addr = ipaddress.ip_address(ip)
         self.address_pool.add(addr)
-        logger.info(f'Address {ip} is now available in the address pool')
+        logger.debug(f'Address {ip} is now available in the address pool')
         return addr
 
     def add_container(self, container, addr=None, reservation=None):
@@ -134,7 +138,7 @@ class BridgeNetwork(BaseNetwork):
         else:
             ipaddr = self._get_next_address()
 
-        logger.info(f'Connect container {container.id[:12]} to network')
+        logger.debug(f'Connect container {container.id[:12]} to network')
 
         # docker network connect
         docker_api_client.connect_container_to_network(
@@ -144,7 +148,7 @@ class BridgeNetwork(BaseNetwork):
         self.containers[container.id] = ipaddr
 
     def remove_container(self, cid):
-        logger.info(f'Disconnect container {cid[:12]} from network')
+        logger.debug(f'Disconnect container {cid[:12]} from network')
 
         try:
             docker_api_client.disconnect_container_from_network(
