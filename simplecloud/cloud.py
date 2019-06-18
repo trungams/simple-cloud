@@ -234,7 +234,9 @@ class MyCloud:
 
             self.proxy.start()
             self.network.add_container(self.proxy, reservation='proxy')
+            self.proxy.exec_run('/root/entry/custom-entrypoint.sh')
             logger.info("Proxy has been started")
+
             self.registry.start()
             self.network.add_container(self.registry, reservation='registry')
             logger.info("Service registry has been started")
@@ -243,9 +245,9 @@ class MyCloud:
                 self.network.registrator = Registrator(self.registry)
             else:
                 self.create_registrator()
-                self.network.add_container(self.registrator)
 
             if self.registrator:
+                self.network.add_container(self.registrator)
                 self.registrator.start()
                 logger.info("Service registrator has been started")
 

@@ -270,17 +270,13 @@ class OpenVSwitchNetwork(BaseNetwork):
         }
 
     def check_bridge_exists(self):
-        command = f'ovs-vsctl list-br'
+        command = f'ovs-vsctl br-exists {self.name}'
         run = subprocess.Popen(command, shell=True,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE)
-        out, _ = run.communicate()
+        run.communicate()
 
-        if run.returncode == 0:
-            bridges = out.decode().split('\n')
-            return self.name in bridges
-        else:
-            return False
+        return run.returncode == 0
 
     def create_network(self, name):
         gateway_ip = self.reservations['_']
@@ -358,11 +354,11 @@ class OpenVSwitchNetwork(BaseNetwork):
         run = subprocess.Popen(command, shell=True,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE)
-        run.communicate()
+        out, err = run.communicate()
 
-        # logger.debug(command)
-        # logger.debug(out.decode())
-        # logger.debug(err.decode())
+        #logger.debug(command)
+        #logger.debug(out.decode())
+        #logger.debug(err.decode())
 
         if run.returncode != 0:
             logger.error(f'Error while connecting container {container.id[:12]} to network')
