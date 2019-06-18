@@ -6,9 +6,12 @@ from simplecloud import logger
 
 
 class Registrator:
-    def __init__(self, consul_host):
-        logger.debug(f'Connecting to Consul at address {consul_host}')
-        self.consul = consul.Consul(host=consul_host)
+    def __init__(self, consul_container):
+        consul_container.reload()
+        consul_ip = consul_container.attrs['NetworkSettings']['Networks']['bridge']['IPAddress']
+
+        logger.debug(f'Connecting to Consul at address {consul_ip}')
+        self.consul = consul.Consul(host=consul_ip)
 
     def register(self, container, ip):
         container.reload()

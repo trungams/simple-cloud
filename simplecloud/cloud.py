@@ -231,11 +231,6 @@ class MyCloud:
         try:
             self.create_registry()
             self.create_proxy()
-            if self.network.ovs:
-                self.network.registrator = Registrator(self.registry_ip)
-            else:
-                self.create_registrator()
-                self.network.add_container(self.registrator)
 
             self.proxy.start()
             self.network.add_container(self.proxy, reservation='proxy')
@@ -243,6 +238,13 @@ class MyCloud:
             self.registry.start()
             self.network.add_container(self.registry, reservation='registry')
             logger.info("Service registry has been started")
+
+            if self.network.ovs:
+                self.network.registrator = Registrator(self.registry)
+            else:
+                self.create_registrator()
+                self.network.add_container(self.registrator)
+
             if self.registrator:
                 self.registrator.start()
                 logger.info("Service registrator has been started")
@@ -339,6 +341,12 @@ class MyCloud:
 
         self.proxy = docker_client.containers.get(container)
 
+    @property
+    def _registry_public_ip(self):
+        self.registry.reload()
+
+        return self.registry.attrs['NetworkSettings']['Networks']['bridge']['IPAddress']
+
     def registry_update(self, service, key, value=None, action='put'):
         if service not in self.services:
             return False
@@ -346,7 +354,10 @@ class MyCloud:
             return False
 
         # craft uri from arguments
-        uri = 'http://%s:8500/v1/kv/service/%s/%s' % (self.registry_ip, service, key)
+        if self.network.ovs:
+            uri = 'http://%s:8500/v1/kv/service/%s/%s' % (self._registry_public_ip, service, key)
+        else:
+            uri = 'http://%s:8500/v1/kv/service/%s/%s' % (self.registry_ip, service, key)
         if action == 'put' and value is not None:
             resp = requests.put(uri, data=value)
             if resp.json():    # success
@@ -363,13 +374,17 @@ class MyCloud:
             return False
 
     def registry_get(self, service, key):
+        # TODO
         if service not in self.services:
             return False
         if key not in proxy_configs:
             return False
 
         # craft uri from arguments
-        uri = 'http://%s:8500/v1/kv/service/%s/%s'
+        if self.network.ovs:
+            pass
+        else:
+            uri = 'http://%s:8500/v1/kv/service/%s/%s'
         resp = requests.get(uri)
 
         # returns default values if key does not exists
