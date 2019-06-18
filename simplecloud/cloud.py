@@ -13,9 +13,9 @@ Core components:
 - Additional web servers: can be created or scaled manually
 """
 
-import docker
 from simplecloud import docker_client, docker_api_client, logger
-from simplecloud.network import BridgeNetwork
+from simplecloud.network import BridgeNetwork, OpenVSwitchNetwork, OvsException
+from simplecloud.registrator import Registrator
 import requests
 import base64
 import traceback
@@ -73,11 +73,6 @@ class MyCloudService:
         return len(self.containers)
 
     def _create_container(self):
-        # networking_config = docker_api_client.create_networking_config({
-        #     self.network: docker_api_client.create_endpoint_config(
-        #         ipv4_address=ipaddr
-        #     )
-        # })
 
         host_config = docker_api_client.create_host_config(
             auto_remove=True,
@@ -91,7 +86,6 @@ class MyCloudService:
             name=f'{self.name}_{self.idx:02d}_{self.network.name}',
             command=self.command,
             detach=True,
-            # networking_config=networking_config,
             host_config=host_config,
             ports=[self.port],
             environment={
@@ -101,14 +95,19 @@ class MyCloudService:
         )
 
         container = docker_client.containers.get(pending_container)
-        self.network.add_container(container)
         self.idx += 1
 
         return container
 
     def _run_container(self):
         container = self._create_container()
-        container.start()
+        # order of operation may affect how registrator works
+        if self.network.ovs:
+            container.start()
+            self.network.add_container(container, register=True)
+        else:
+            self.network.add_container(container)
+            container.start()
         return container
 
     def info(self):
@@ -149,8 +148,11 @@ class MyCloudService:
         elif new_size < cur_size:
             # stop some running containers
             for container in self.containers[new_size:]:
-                self.network.remove_container(container.id)
-                _stop_container(container)
+                try:
+                    self.network.remove_container(container.id)
+                    _stop_container(container)
+                except (OvsException,):
+                    pass
             self.reload()
         else:
             # start new containers
@@ -165,17 +167,24 @@ class MyCloudService:
     def stop(self):
         """Stop all containers"""
         for container in self.containers:
-            self.network.remove_container(container.id)
-            _stop_container(container)
+            try:
+                self.network.remove_container(container.id)
+                _stop_container(container)
+            except (OvsException,):
+                pass
         self.containers = []
 
     def __str__(self):
         return f'Service: {self.name}'
 
 
+class CloudException(Exception):
+    pass
+
+
 class MyCloud:
-    def __init__(self, subnet=None, network_name=None, proxy_ip=None, gateway_ip=None,
-                 initial_services=None, entrypoint=None, *args, **kwargs):
+    def __init__(self, subnet=None, network_name=None, ovs=False, proxy_ip=None,
+                 gateway_ip=None, initial_services=None, entrypoint=None):
         self.running = True
 
         # declare variables for network stuff
@@ -192,11 +201,21 @@ class MyCloud:
         if not gateway_ip:
             reservations.pop('gateway')
 
-        self.network = BridgeNetwork(
-            network_name,
-            subnet,
-            reservations
-        )
+        if ovs:
+            self.network = OpenVSwitchNetwork(
+                network_name,
+                subnet,
+                reservations
+            )
+        else:
+            self.network = BridgeNetwork(
+                network_name,
+                subnet,
+                reservations
+            )
+
+        self.registry_ip = self.network.reserve_ip('registry')
+        logger.debug(f'registry ip requested: {self.registry_ip}')
 
         # create variables for important containers
         self.registry_name = "service-registry-%s" % network_name
@@ -210,18 +229,23 @@ class MyCloud:
         self.used_ports = set()
 
         try:
-            # start service registry, discovery, proxy and services
-            # start proxy container first to reserve ip
-            self.create_proxy()
             self.create_registry()
-            self.create_registrator()
+            self.create_proxy()
+            if self.network.ovs:
+                self.network.registrator = Registrator(self.registry_ip)
+            else:
+                self.create_registrator()
+                self.network.add_container(self.registrator)
 
             self.proxy.start()
+            self.network.add_container(self.proxy, reservation='proxy')
             logger.info("Proxy has been started")
             self.registry.start()
+            self.network.add_container(self.registry, reservation='registry')
             logger.info("Service registry has been started")
-            self.registrator.start()
-            logger.info("Service registrator has been started")
+            if self.registrator:
+                self.registrator.start()
+                logger.info("Service registrator has been started")
 
             if initial_services:
                 self.initialize_services(initial_services)
@@ -231,6 +255,7 @@ class MyCloud:
                 traceback.format_exception(
                     type(e), e, e.__traceback__)))
             self.cleanup()
+            raise CloudException
 
     def create_registry(self):
         host_config = docker_api_client.create_host_config(
@@ -240,19 +265,15 @@ class MyCloud:
             }
         )
 
-        ipaddr = self.network.get_available_ip()
-
         container = docker_api_client.create_container(
             image="citelab/consul-server:latest",
-            command=["-bootstrap", f'-advertise={ipaddr}'],
+            command=["-bootstrap", f'-advertise={self.registry_ip}'],
             name=self.registry_name,
             host_config=host_config,
             detach=True
         )
 
         self.registry = docker_client.containers.get(container)
-
-        self.network.add_container(self.registry, ipaddr)
 
     def create_registrator(self):
         host_config = docker_api_client.create_host_config(
@@ -268,10 +289,11 @@ class MyCloud:
         container = docker_api_client.create_container(
             image="citelab/registrator:latest",
             command=["-internal",
+                     "-explicit",
                      "-network=%s" % self.network.name,
                      "-retry-attempts=10",
                      "-retry-interval=1000",
-                     "consul://%s:8500" % self.registry_name],
+                     "consul://%s:8500" % self.registry_ip],
             name=self.registrator_name,
             volumes=["/tmp/docker.sock"],
             host_config=host_config,
@@ -279,8 +301,6 @@ class MyCloud:
         )
 
         self.registrator = docker_client.containers.get(container)
-
-        self.network.add_container(self.registrator)
 
     def create_proxy(self):
 
@@ -308,7 +328,7 @@ class MyCloud:
             command=[
                 "consul-template",
                 "-config=/tmp/haproxy.conf",
-                "-consul=%s:8500" % self.registry_name,
+                "-consul=%s:8500" % self.registry_ip,
                 "-log-level=debug"
             ],
             volumes=proxy_volumes,
@@ -318,14 +338,6 @@ class MyCloud:
         )
 
         self.proxy = docker_client.containers.get(container)
-
-        self.network.add_container(self.proxy, reservation='proxy')
-
-    @property
-    def registry_ip(self):
-        info = docker_api_client.inspect_container(self.registry_name)
-        registry_ip = info['NetworkSettings']['Networks'][self.network.name]['IPAddress']
-        return registry_ip
 
     def registry_update(self, service, key, value=None, action='put'):
         if service not in self.services:
@@ -418,9 +430,13 @@ class MyCloud:
 
     def cleanup(self):
         logger.debug("Cleaning up everything")
+        self.network.stop_listening()
         for container in (self.registry, self.registrator, self.proxy):
-            self.network.remove_container(container.id)
-            _stop_container(container)
+            try:
+                self.network.remove_container(container.id)
+                _stop_container(container)
+            except:
+                continue
         for service in self.services.values():
             service.stop()
         try:
