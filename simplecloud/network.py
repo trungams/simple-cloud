@@ -258,8 +258,11 @@ class OpenVSwitchNetwork(BaseNetwork):
         self.reservations['_'] = self._get_next_address()
         for _, ip in self.reservations.items():
             self._remove_ip(ip)
+
         if not self.check_bridge_exists():
             self.create_network(network_name)
+        else:
+            logger.debug('Bridge already exists, using it instead')
 
         self._handlers = {
             ('container', 'die'): self.handler_container_die,
@@ -267,14 +270,17 @@ class OpenVSwitchNetwork(BaseNetwork):
         }
 
     def check_bridge_exists(self):
-        command = f'ovs-ofctl show {self.name}'
+        command = f'ovs-vsctl list-br'
         run = subprocess.Popen(command, shell=True,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE)
-        run.communicate()
+        out, _ = run.communicate()
 
-        # return code == 0 means there's already an ovs bridge with the same name
-        return run.returncode == 0
+        if run.returncode == 0:
+            bridges = out.decode().split('\n')
+            return self.name in bridges
+        else:
+            return False
 
     def create_network(self, name):
         gateway_ip = self.reservations['_']
