@@ -105,9 +105,12 @@ class CloudShell(Cmd, object):
                             line = 'EOF'
                         else:
                             line = line.rstrip('\r\n')
-                line = self.precmd(line)
-                stop = self.onecmd(line)
-                stop = self.postcmd(stop, line)
+                try:
+                    line = self.precmd(line)
+                    stop = self.onecmd(line)
+                    stop = self.postcmd(stop, line)
+                except:
+                    continue
             self.postloop()
         finally:
             if self.use_rawinput and self.completekey:

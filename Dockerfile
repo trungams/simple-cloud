@@ -6,7 +6,7 @@ COPY --from=docker-base /usr/local/bin/docker /usr/bin/docker
 
 RUN apt update && \
     apt upgrade && \
-    apt install -y iproute2 uuid-runtime
+    apt install -y iproute2 uuid-runtime procps psmisc
 
 # ovs stuffs
 COPY ovs-scripts/ovs* /usr/bin/
